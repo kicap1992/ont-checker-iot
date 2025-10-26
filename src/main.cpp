@@ -3,6 +3,7 @@
 // for wifi connection
 #include <ESP8266WiFi.h>
 #include <ESP8266Ping.h>  // Library for ping functionality
+#include <WiFiClient.h>
 // end of wifi
 
 // this is for sim800l
@@ -27,13 +28,17 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 // end of oled
 
 const char APN[] = "internet";
-const char URL[] = "http://cekont.mywork-kk.online/data";
+const char URL[] = "http://cekont.mywork-kkk.online/data";
 
 // Replace these with your network credentials
-// const char* ssid = "hu";
+// const char* ssid = "KARAN";
 // const char* password = "12345679";
 const char* ssid = "HOME";
 const char* password = "88888888";
+
+const char* server = "cekont.mywork-kkk.online"; // Change to your server's IP
+const int port = 80;
+
 
 SIM800L* sim800l;
 
@@ -167,6 +172,165 @@ void getHttpData(const String& params) {
 
   delay(1000);
 }
+
+
+// Function to test download speed
+String testDownloadSpeed() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClient client;
+
+    Serial.println("Connecting to server for download test...");
+    if (client.connect(server, port)) {
+      Serial.println("Connected! Downloading data...");
+      displayText2("Connecting to server for download test...", "Downloading data...");
+      delay(1000);
+      
+
+      unsigned long startTime = millis();
+
+      // Send HTTP GET request
+      client.println("GET /download?id=1 HTTP/1.1");
+      client.print("Host: ");
+      client.println(server);
+      client.println("Connection: close");
+      client.println();
+
+      // Wait for response
+      while (!client.available()) {
+        delay(10);
+      }
+
+      // Read and count bytes
+      size_t bytesRead = 0;
+      while (client.available()) {
+        client.read();
+        bytesRead++;
+      }
+
+      unsigned long endTime = millis();
+
+      // Calculate download speed
+      float timeTaken = (endTime - startTime) / 1000.0;  // Convert to seconds
+      float speedKbps = (bytesRead * 8) / 1024.0 / timeTaken; // Convert to Kbps
+      float speedMbps = speedKbps / 1024.0; // Convert to Mbps
+
+      Serial.print("Downloaded ");
+      Serial.print(bytesRead);
+      displayText2("Downloaded ", String(bytesRead) + " bytes");
+      delay(1000);
+      Serial.print(" bytes in ");
+      Serial.print(timeTaken, 2);
+      Serial.println(" seconds.");
+      displayText2(" bytes in ", String(timeTaken, 2) + " seconds.");
+      delay(1000);
+      Serial.print("Download Speed: ");
+      Serial.print(speedMbps, 2);
+      Serial.println(" Mbps");
+      displayText2("Download Speed: ", String(speedMbps, 2) + " Mbps");
+      delay(1000);
+
+      client.stop();  // Close connection
+      return String(speedMbps, 2);
+    } else {
+      Serial.println("Connection to server failed!");
+      displayText2("Connection to server failed!", "Connection to server failed!");
+      delay(1000);
+      return "Connection to server failed!";
+    }
+  } else {
+    Serial.println("WiFi disconnected!");
+    displayText2("WiFi disconnected!", "WiFi disconnected!");
+    delay(1000);
+    return "WiFi disconnected!";
+  }
+}
+
+// Function to test upload speed
+String testUploadSpeed() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected!");
+    displayText2("WiFi disconnected!", "WiFi disconnected!");
+    delay(1000);
+    return "WiFi disconnected!";
+  }
+
+  WiFiClient client;
+  Serial.println("Connecting to server...");
+  displayText("Connecting to server...");
+  delay(1000);
+  
+  if (!client.connect(server, port)) {
+    Serial.println("Connection failed!");
+    displayText("Connection failed!");
+    delay(1000);
+    return "Connection failed!";
+  }
+
+  Serial.println("Connected! Uploading...");
+  displayText("Connected! Uploading...");
+  delay(1000);
+
+  String boundary = "----ESP8266Upload";
+  String payloadHeader = "--" + boundary + "\r\n" +
+                         "Content-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\n" +
+                         "Content-Type: application/octet-stream\r\n\r\n";
+
+  String payloadFooter = "\r\n--" + boundary + "--\r\n";
+
+  const size_t dataSize = 100 * 1024; // 100 KB test file
+  byte buffer[256];
+  memset(buffer, 0xAA, sizeof(buffer));  // Fill buffer with dummy data
+
+  size_t totalSize = payloadHeader.length() + dataSize + payloadFooter.length();
+
+  // **Send HTTP Headers**
+  client.println("POST /upload?id=1 HTTP/1.1");
+  client.print("Host: ");
+  client.println(server);
+  client.println("Content-Type: multipart/form-data; boundary=" + boundary);
+  client.print("Content-Length: ");
+  client.println(totalSize);
+  client.println();  // End headers
+
+  client.print(payloadHeader);
+  client.flush();  // Ensure headers are fully sent
+
+  // **Send File Data**
+  unsigned long startTime = millis();
+  for (size_t i = 0; i < dataSize; i += sizeof(buffer)) {
+    client.write(buffer, sizeof(buffer));
+    client.flush();  // Force send each chunk
+    delay(1);  // Prevent buffer overflow
+  }
+  unsigned long endTime = millis();
+
+  // **Send Footer (closing boundary)**
+  client.print(payloadFooter);
+  client.flush();
+
+  Serial.println("Upload completed. Waiting for response...");
+  displayText2("Upload completed", "Waiting for response...");
+  delay(1000);
+
+  // **Read server response**
+  while (client.connected() && !client.available()) {
+    delay(10);
+  }
+
+  while (client.available()) {
+    Serial.write(client.read());
+  }
+
+  client.stop();  // Close connection
+
+  float timeTaken = (endTime - startTime) / 1000.0;
+  float speedMbps = ((dataSize * 8) / 1024.0 / timeTaken) / 1024.0;
+
+  Serial.printf("\nUpload Speed: %.2f Mbps\n", speedMbps);
+  return String(speedMbps, 2);
+}
+
+
 void setup() {
   // Initialize Serial Monitor for debugging
   Serial.begin(115200);
@@ -213,7 +377,7 @@ void loop() {
     Serial.print(F("GPRS connected with IP "));
     Serial.println(sim800l->getIP());
     displayText2("GPRS connected with IP ", String(sim800l->getIP()));
-    delay(2000);
+    delay(1000);
   } else {
     Serial.println(F("GPRS not connected !"));
     Serial.println(F("Reset the module."));
@@ -225,7 +389,7 @@ void loop() {
   }
 
   // connect to wifi in 5 seconds
-  delay(3000);
+  delay(1000);
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("WiFi connected");
 
@@ -234,7 +398,20 @@ void loop() {
       Serial.println("Internet connected");
       displayText2("WiFi connected", "Internet connected");
       delay(2000);
-      getHttpData("?id=1&wifi=connected&internet=connected");
+
+      String download = testDownloadSpeed();
+      Serial.println(download);
+      displayText(download.c_str());
+      delay(2000);
+
+      String upload = testUploadSpeed();
+      Serial.println(upload);
+      displayText(upload.c_str());
+      delay(2000);
+      
+
+
+      getHttpData("?id=1&wifi=connected&internet=connected&download=" + download + "&upload=" + upload);
     } else {
       Serial.println("Internet disconnected");
       displayText2("WiFi connected", "Internet disconnected");
